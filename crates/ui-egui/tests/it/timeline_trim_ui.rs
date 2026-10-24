@@ -30,6 +30,10 @@ impl Driver {
         let mut session = Session::default();
         session.execute("file.openDemoProject", json!({})).expect("demo project");
         session.execute("sequence.snap", json!({"on": false})).expect("snapping off");
+        Self::with_session(session)
+    }
+
+    fn with_session(session: Session) -> Self {
         let (tx, rx) = channel();
         let app = FilmcraftApp::new(session).with_control(rx);
         let harness = Harness::builder().with_size(egui::vec2(1600.0, 980.0)).with_step_dt(1.0 / 60.0).with_max_steps(10_000).build_eframe(move |_cc| app);
@@ -78,17 +82,34 @@ impl Driver {
 
     /// Press at `from`, move to `to` over `steps` frames (as a mouse does), release.
     fn drag(&mut self, from: Pos2, to: Pos2, steps: usize) {
+        self.drag_with_mods(from, to, steps, egui::Modifiers::NONE, false);
+    }
+
+    fn drag_with_mods(&mut self, from: Pos2, to: Pos2, steps: usize, mods: egui::Modifiers, release_shift_early: bool) {
+        self.harness.input_mut().events.push(egui::Event::ModifiersChanged(mods));
         let push = |d: &mut Self, e: egui::Event| d.harness.input_mut().events.push(e);
         push(self, egui::Event::PointerMoved(from));
         self.frames(1);
-        push(self, egui::Event::PointerButton { pos: from, button: egui::PointerButton::Primary, pressed: true, modifiers: Default::default() });
+        push(self, egui::Event::PointerButton { pos: from, button: egui::PointerButton::Primary, pressed: true, modifiers: mods });
         self.frames(1);
+        if release_shift_early {
+            self.harness.input_mut().events.push(egui::Event::ModifiersChanged(egui::Modifiers::NONE));
+        }
         for i in 1..=steps {
             push(self, egui::Event::PointerMoved(from + (to - from) * (i as f32 / steps as f32)));
             self.frames(1);
         }
-        push(self, egui::Event::PointerButton { pos: to, button: egui::PointerButton::Primary, pressed: false, modifiers: Default::default() });
+        push(
+            self,
+            egui::Event::PointerButton {
+                pos: to,
+                button: egui::PointerButton::Primary,
+                pressed: false,
+                modifiers: if release_shift_early { egui::Modifiers::NONE } else { mods },
+            },
+        );
         self.frames(2);
+        self.harness.input_mut().events.push(egui::Event::ModifiersChanged(egui::Modifiers::NONE));
     }
 
     /// Move the pointer to `at` with no button down, and let the Timeline react.
@@ -562,4 +583,85 @@ fn linked_video_drag_adds_video_and_audio_tracks() {
 #[test]
 fn linked_audio_drag_adds_audio_and_video_tracks() {
     move_existing_clip_to_a_new_track(true, true);
+}
+
+fn ripple_fixture() -> (Driver, u64, u64) {
+    let mut s = Session::default();
+    s.execute("file.newProject", json!({"name":"Visual ripple"})).unwrap();
+    s.execute("file.newSequence", json!({"name":"Sequence","fps":25,"video":1,"audio":2})).unwrap();
+    let r = s.execute("file.newOfflineFile", json!({"name":"Synthetic","seconds":10,"fps":25,"video":true,"audio":true})).unwrap();
+    let item = r["item"].as_u64().unwrap();
+    let f = s.sequence_rate().tick_of(1).0;
+    let mut clips = Vec::new();
+    for n in 0..3 {
+        let r = s.execute("timeline.place", json!({"item":item,"track":"V1","audioTrack":"A1","time":f*60*n,"sourceIn":f*20,"duration":f*60})).unwrap();
+        clips.push(r["clips"][0].as_u64().unwrap());
+    }
+    s.execute("timeline.place", json!({"item":item,"track":"A2","time":0,"duration":f*240})).unwrap();
+    s.execute("timeline.setTrack", json!({"track":"A2","locked":true})).unwrap();
+    s.execute("sequence.snap", json!({"on":false})).unwrap();
+    let mut d = Driver::with_session(s);
+    d.ok("ui.set", json!({"tool":"RateStretch"}));
+    (d, clips[0], clips[1])
+}
+
+#[test]
+fn shift_out_drag_ripples_both_directions_and_captures_shift_at_press() {
+    for direction in [-1.0, 1.0] {
+        let (mut d, first, next) = ripple_fixture();
+        let before = d.app().session.project.clone();
+        let undo = d.undo_steps();
+        let (x0, x1, y) = d.edges(first);
+        let by = ((x1 - x0) / 4.0).round() * direction;
+        d.drag_with_mods(pos2(x1 - 3.0, y), pos2(x1 - 3.0 + by, y), by.abs() as usize, egui::Modifiers::SHIFT, true);
+        let q = d.app().session.active_sequence().unwrap();
+        let a = q.find_item(ClipId(first)).unwrap().1;
+        let b = q.find_item(ClipId(next)).unwrap().1;
+        assert_eq!(a.end(), b.start);
+        let old = before.sequence(d.app().session.state.active_sequence.unwrap()).unwrap();
+        let old_a = old.find_item(ClipId(first)).unwrap().1;
+        assert_eq!((a.source_in, a.source_out()), (old_a.source_in, old_a.source_out()));
+        assert_eq!(q.audio_tracks[1], old.audio_tracks[1]);
+        assert_eq!(a.duration.cmp(&old_a.duration), if direction < 0.0 { std::cmp::Ordering::Less } else { std::cmp::Ordering::Greater });
+        assert_eq!(d.undo_steps(), undo + 1);
+        d.exec("edit.undo", json!({}));
+        assert_eq!(*d.app().session.project, *before);
+    }
+}
+
+#[test]
+fn plain_rate_stretch_leaves_a_gap_and_shift_in_is_ordinary() {
+    let (mut d, first, next) = ripple_fixture();
+    let (x0, x1, y) = d.edges(first);
+    let next_start = d.span(next).0;
+    let by = ((x1 - x0) / 4.0).round();
+    d.drag(pos2(x1 - 3.0, y), pos2(x1 - 3.0 - by, y), by as usize);
+    assert!(d.span(first).1 < next_start);
+    assert_eq!(d.span(next).0, next_start);
+    d.exec("edit.undo", json!({}));
+    let (x0, _, y) = d.edges(first);
+    d.drag_with_mods(pos2(x0 + 3.0, y), pos2(x0 + 3.0 + by, y), by as usize, egui::Modifiers::SHIFT, false);
+    assert!(d.span(first).0 > 0);
+    assert_eq!(d.span(first).1, next_start);
+    assert_eq!(d.span(next).0, next_start);
+}
+
+#[test]
+#[ignore = "headless wgpu visual review"]
+fn ripple_rate_stretch_screenshot() {
+    let (mut d, first, _) = ripple_fixture();
+    let (x0, x1, y) = d.edges(first);
+    d.harness.input_mut().events.push(egui::Event::ModifiersChanged(egui::Modifiers::SHIFT));
+    d.hover(pos2(x1 - 3.0, y));
+    d.screenshot("ripple-rate-stretch-hover");
+    d.harness.input_mut().events.push(egui::Event::PointerButton {
+        pos: pos2(x1 - 3.0, y),
+        button: egui::PointerButton::Primary,
+        pressed: true,
+        modifiers: egui::Modifiers::SHIFT,
+    });
+    d.frames(1);
+    d.harness.input_mut().events.push(egui::Event::PointerMoved(pos2(x1 + (x1 - x0) / 4.0, y)));
+    d.frames(3);
+    d.screenshot("ripple-rate-stretch-preview");
 }

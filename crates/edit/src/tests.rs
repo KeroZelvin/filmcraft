@@ -905,3 +905,6 @@ fn moving_an_edge_keeps_the_media_under_the_timeline() {
         }
     }
 }
+
+#[path = "ripple_rate_tests.rs"]
+mod ripple_rate_tests;

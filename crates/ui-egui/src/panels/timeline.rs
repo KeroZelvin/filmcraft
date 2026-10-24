@@ -139,6 +139,8 @@ pub enum Drag {
         delta: Tick,
         /// As in [`Drag::Trim`].
         from: Tick,
+        /// Captured at press by the shared hit test; never inherited from Speed/Duration.
+        ripple: bool,
     },
     /// Remix tool: drag a music clip's Out edge; on release `clip.remix` re-plans it to the new duration.
     Remix {
@@ -495,7 +497,7 @@ pub fn show(app: &mut FilmcraftApp, ui: &mut egui::Ui, rect: Rect) {
     // clips whose media changes in the preview (a trimmed or rolled edge): drawn from the edited
     // item, so the waveform and thumbnail stay where the media is instead of squeezing (#374)
     let mut edited: HashMap<ClipId, TrackItem> = HashMap::new();
-    preview_drag(app, seq, &mut previews, &mut edited);
+    let stretch_preview = preview_drag(app, seq, &mut previews, &mut edited);
     // Option-drag copies: the clips stay where they are and their copies follow the pointer
     let copying = matches!(app.tl.drag, Some(Drag::Move { copy: true, .. }));
     let copies: Vec<(ClipId, (Tick, Tick, Option<TrackId>))> = if copying { previews.drain().collect() } else { Vec::new() };
@@ -589,7 +591,8 @@ pub fn show(app: &mut FilmcraftApp, ui: &mut egui::Ui, rect: Rect) {
         // clip drag also shows where the drop will carry its transitions (those whose clips all
         // move to one track by one offset): a plain move draws them on their destination track
         // right away, a copy adds a ghost beside the copies while the originals stay at home.
-        for trn in &tr.transitions {
+        let transitions = stretch_preview.as_ref().and_then(|q| q.track(r.track)).map(|tr| &tr.transitions).unwrap_or(&tr.transitions);
+        for trn in transitions {
             let carried = move_transition_preview(app, seq, trn);
             // the transition's home span (a transition dragged by an end still takes over)
             let (start, end) = match &app.tl.drag {
@@ -1890,7 +1893,22 @@ pub fn locate(app: &FilmcraftApp, clip: u64, edge: Option<&str>) -> Option<(f32,
     Some((x, y))
 }
 
-fn preview_drag(app: &FilmcraftApp, seq: &Sequence, out: &mut HashMap<ClipId, (Tick, Tick, Option<TrackId>)>, edited: &mut HashMap<ClipId, TrackItem>) {
+fn preview_drag(
+    app: &FilmcraftApp,
+    seq: &Sequence,
+    out: &mut HashMap<ClipId, (Tick, Tick, Option<TrackId>)>,
+    edited: &mut HashMap<ClipId, TrackItem>,
+) -> Option<Sequence> {
+    if let Some(Drag::Stretch { clip, edge, delta, ripple, .. }) = &app.tl.drag {
+        let work = filmcraft_engine::commands::rate_stretch_preview(&app.session, *clip, *edge, *delta, *ripple).ok()?;
+        let old_positions: HashMap<ClipId, (Tick, Tick)> = seq.all_tracks().flat_map(|tr| tr.items.iter().map(|i| (i.id, (i.start, i.duration)))).collect();
+        for it in work.all_tracks().flat_map(|tr| &tr.items) {
+            if old_positions.get(&it.id).is_some_and(|old| *old != (it.start, it.duration)) {
+                out.insert(it.id, (it.start, it.duration, None));
+            }
+        }
+        return Some(work);
+    }
     // the item as the edge move leaves it, and its place in the preview
     let mut moved = |it: &TrackItem, edge: filmcraft_edit::Edge, delta: Tick| {
         let mut e = it.clone();
@@ -1898,7 +1916,7 @@ fn preview_drag(app: &FilmcraftApp, seq: &Sequence, out: &mut HashMap<ClipId, (T
         out.insert(e.id, (e.start, e.duration, None));
         edited.insert(e.id, e);
     };
-    let Some(d) = &app.tl.drag else { return };
+    let Some(d) = &app.tl.drag else { return None };
     match d {
         Drag::Move { new_track: Some(_), .. } => {}
         Drag::Move { clips, offset, track_delta, .. } => {
@@ -1921,19 +1939,6 @@ fn preview_drag(app: &FilmcraftApp, seq: &Sequence, out: &mut HashMap<ClipId, (T
                 }
             }
         }
-        // a rate stretch keeps the same media in a new length: that one does squeeze
-        Drag::Stretch { clip, edge, delta, .. } => {
-            let ids = filmcraft_engine::commands::with_links(&app.session, &[*clip]);
-            for c in ids {
-                if let Some((_, it)) = seq.find_item(c) {
-                    let v = match edge {
-                        filmcraft_edit::Edge::In => (it.start + *delta, it.duration - *delta, None),
-                        filmcraft_edit::Edge::Out => (it.start, it.duration + *delta, None),
-                    };
-                    out.insert(c, v);
-                }
-            }
-        }
         Drag::Roll { left, right, delta, .. } => {
             let pairs = filmcraft_engine::commands::linked_roll_pairs(seq, *left, *right, app.session.state.linked_selection);
             for (pl, pr) in pairs {
@@ -1952,6 +1957,7 @@ fn preview_drag(app: &FilmcraftApp, seq: &Sequence, out: &mut HashMap<ClipId, (T
         }
         _ => {}
     }
+    None
 }
 
 /// The transition a clip drag will leave behind, by the same rule `edit::move_items` applies:
@@ -2002,6 +2008,7 @@ fn marquee_clips(seq: &Sequence, layout: &Layout, r: Rect) -> Vec<ClipId> {
 fn drag_is_locked(session: &filmcraft_engine::Session, seq: &Sequence, drag: &Drag) -> bool {
     let clips = match drag {
         Drag::Move { clips, track_delta, .. } => return move_is_locked(seq, clips, *track_delta),
+        Drag::Stretch { clip, ripple: true, .. } => return move_is_locked(seq, &[*clip], 0),
         Drag::Trim { clip, .. } | Drag::Stretch { clip, .. } | Drag::Remix { clip, .. } | Drag::Slip { clip, .. } | Drag::Slide { clip, .. } => vec![*clip],
         Drag::Roll { left, right, .. } => vec![*left, *right],
         Drag::Transition { id, .. } => return seq.all_tracks().any(|t| t.locked && t.transitions.iter().any(|tr| tr.id == *id)),
@@ -2509,7 +2516,8 @@ fn interact(app: &mut FilmcraftApp, ui: &mut egui::Ui, seq: &Sequence, layout: &
                 EdgeKind::Trim => Drag::Trim { clip, edge, mode: filmcraft_edit::TrimMode::Regular, delta: Tick::ZERO, from: t },
                 EdgeKind::Ripple => Drag::Trim { clip, edge, mode: filmcraft_edit::TrimMode::Ripple, delta: Tick::ZERO, from: t },
                 EdgeKind::Roll { left, right } => Drag::Roll { left, right, delta: Tick::ZERO, from: t },
-                EdgeKind::Stretch => Drag::Stretch { clip, edge, delta: Tick::ZERO, from: t },
+                EdgeKind::Stretch => Drag::Stretch { clip, edge, delta: Tick::ZERO, from: t, ripple: false },
+                EdgeKind::RippleStretch => Drag::Stretch { clip, edge, delta: Tick::ZERO, from: t, ripple: true },
                 EdgeKind::Remix => Drag::Remix { clip, delta: Tick::ZERO, from: t },
             }),
             (_, Grab::Volume { clip, .. }) if resp.drag_started() => super::timeline_volume::start(seq, layout, clip, p).map(Drag::Volume),
@@ -2684,10 +2692,21 @@ fn interact(app: &mut FilmcraftApp, ui: &mut egui::Ui, seq: &Sequence, layout: &
                 let target = rate.snap_nearest(it.end() + (t_here - from)).max(it.start + rate.frame_duration());
                 Drag::Remix { clip, delta: target - it.end(), from }
             }),
-            Drag::Stretch { clip, edge, from, .. } => seq.find_item(clip).map(|(_, it)| {
+            Drag::Stretch { clip, edge, from, ripple, .. } => seq.find_item(clip).map(|(_, it)| {
                 let base = if edge == filmcraft_edit::Edge::In { it.start } else { it.end() };
                 let target = snap(app, seq, layout, rate.snap_nearest(base + (t_here - from)), &[clip]);
-                Drag::Stretch { clip, edge, delta: target - base, from }
+                let delta = match filmcraft_engine::commands::rate_stretch_preview(&app.session, clip, edge, target - base, ripple) {
+                    Ok(q) => q
+                        .find_item(clip)
+                        .map(|(_, i)| if edge == filmcraft_edit::Edge::In { i.start - it.start } else { i.duration - it.duration })
+                        .unwrap_or_default(),
+                    Err(e) => {
+                        ctx.set_cursor_icon(CursorIcon::NotAllowed);
+                        app.ui.status = e.to_string();
+                        Tick::ZERO
+                    }
+                };
+                Drag::Stretch { clip, edge, delta, from, ripple }
             }),
             Drag::Roll { left, right, from, .. } => seq.find_item(left).map(|(_, l)| {
                 let target = snap(app, seq, layout, rate.snap_nearest(l.end() + (t_here - from)), &[left, right]);
@@ -2785,7 +2804,7 @@ fn interact(app: &mut FilmcraftApp, ui: &mut egui::Ui, seq: &Sequence, layout: &
                     "timeline.trim",
                     json!({"clip": clip.0, "edge": if edge == filmcraft_edit::Edge::In {"in"} else {"out"}, "mode": if mode == filmcraft_edit::TrimMode::Ripple {"ripple"} else {"regular"}, "delta": delta.0}),
                 )),
-                Drag::Stretch { clip, edge, delta, .. } if delta != Tick::ZERO => Some(app.session.execute("timeline.rateStretch", json!({"clip": clip.0, "edge": if edge == filmcraft_edit::Edge::In {"in"} else {"out"}, "delta": delta.0}))),
+                Drag::Stretch { clip, edge, delta, ripple, .. } if delta != Tick::ZERO => Some(app.session.execute("timeline.rateStretch", json!({"clip": clip.0, "edge": if edge == filmcraft_edit::Edge::In {"in"} else {"out"}, "delta": delta.0, "ripple": ripple}))),
                 Drag::Remix { clip, delta, .. } if delta != Tick::ZERO => {
                     let d = seq.find_item(clip).map(|(_, it)| it.duration + delta).unwrap_or(Tick::ZERO);
                     Some(app.session.execute("clip.remix", json!({"clip": clip.0, "duration": d.0})))
@@ -3299,7 +3318,7 @@ mod trim_preview_tests {
         assert_same_media(&right, &edited[&right.id]);
         assert_eq!(edited[&right.id].start, right.start + delta);
         // Rate Stretch keeps the same media in a new length: drawn from the original item
-        app.tl.drag = Some(Drag::Stretch { clip: left.id, edge: filmcraft_edit::Edge::Out, delta, from: Tick::ZERO });
+        app.tl.drag = Some(Drag::Stretch { clip: left.id, edge: filmcraft_edit::Edge::Out, delta: -delta, from: Tick::ZERO, ripple: false });
         let (mut out, mut edited) = (HashMap::new(), HashMap::new());
         preview_drag(&app, &seq, &mut out, &mut edited);
         assert!(edited.is_empty() && out.contains_key(&left.id));

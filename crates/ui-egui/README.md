@@ -3,6 +3,37 @@
 The egui frontend draws panels and dialogs, and dispatches project changes through the engine.
 Interactive controls keep stable automation ids regardless of the interface language.
 
+## Visual ripple rate stretch
+
+With the Rate Stretch tool (`R`), hold **Shift when pressing an Out edge**, then drag to shorten
+or lengthen the clip while trailing clips follow. The hover bracket turns red. The gesture is
+captured at the press, so releasing Shift before the mouse does not change the edit. The
+preview uses the same edit algebra as release; a blocked edit reports its reason and stays put.
+One drag is one undo step.
+
+Plain Rate Stretch, including Shift on an In edge, retains its usual neighbour-limited behavior.
+The **Ripple Edit, Shifting Trailing Clips** checkbox applies only to the Speed/Duration dialog;
+it does not enable a persistent mode for later drags. There is no new global preference.
+
+The edited clip's In edge and source span stay fixed. Followers on its track and unlocked,
+sync-locked video/audio tracks move once by the duration change, preserving existing gaps and
+following split-edit partners according to ripple-trim rules. Selection does not restrict the
+followers. Locked tracks (including a music bed) stay fixed. An unlocked grabbed clip may stretch
+while its locked linked partner stays fixed, matching ordinary Rate Stretch's locked-partner rule.
+Linked members being stretched must have matching starts, durations, speeds and direction;
+other split edits are refused rather than silently losing their source correspondence. In-edge
+ripple rate stretch and retiming captions are outside this gesture's scope. Affected unlocked,
+sync-locked caption tracks therefore block the edit with an explanation; locked captions or
+tracks with sync lock off stay fixed. Rate stretch does
+not consume extra source handles; transitions follow their cut and one-sided fades fit the clip.
+
+Automation: `timeline.rateStretch` accepts `ripple: true` for the Out edge, and
+`ui.timeline.hit` reports `kind: "rippleRateStretch"` for Shift + Out edge. The command's default
+is non-ripple. Edit-algebra, engine undo/redo and headless pointer tests use synthetic fixtures;
+the ignored `ripple_rate_stretch_screenshot` test renders the hover and preview without a desktop
+window. Live playback, hardware decode and the separate report of a temporarily black clip are
+not established by these geometry/state tests.
+
 ## Control input limits
 
 The control channel bounds `ui.click` to 10 clicks and `ui.drag` to 1024 movement steps (#2784).
