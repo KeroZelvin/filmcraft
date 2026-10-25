@@ -34,6 +34,11 @@ the ignored `ripple_rate_stretch_screenshot` test renders the hover and preview 
 window. Live playback, hardware decode and the separate report of a temporarily black clip are
 not established by these geometry/state tests.
 
+Alt at the press leaves the edited clip's linked partner unstretched, matching ordinary edge
+edits. The preview and release capture this choice together with Shift. `timeline.rateStretch`
+accepts `linked: false` for the same operation; ripple followers still obey track sync-lock and
+collision rules, so an unchanged partner that blocks a shortening refuses the edit atomically.
+
 ## Control input limits
 
 The control channel bounds `ui.click` to 10 clicks and `ui.drag` to 1024 movement steps (#2784).

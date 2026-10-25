@@ -784,6 +784,31 @@ fn plain_rate_stretch_leaves_a_gap_and_shift_in_is_ordinary() {
 }
 
 #[test]
+fn alt_rate_stretch_and_shift_alt_ripple_leave_the_edited_linked_audio_fixed() {
+    for (mods, direction) in [(egui::Modifiers::ALT, -1.0), (egui::Modifiers { alt: true, shift: true, ..Default::default() }, 1.0)] {
+        let (mut d, first, _) = ripple_fixture();
+        let before = d.app().session.project.clone();
+        let q = d.app().session.active_sequence().unwrap();
+        let audio = q.audio_tracks[0].items[0].id.0;
+        let old_audio = q.find_item(ClipId(audio)).unwrap().1.clone();
+        let undo = d.undo_steps();
+        let (x0, x1, y) = d.edges(first);
+        let by = ((x1 - x0) / 4.0).round() * direction;
+        d.drag_with_mods(pos2(x1 - 3.0, y), pos2(x1 - 3.0 + by, y), by.abs() as usize, mods, true);
+        let q = d.app().session.active_sequence().unwrap();
+        assert_eq!(q.find_item(ClipId(audio)).unwrap().1, &old_audio);
+        let old = before.sequence(d.app().session.state.active_sequence.unwrap()).unwrap();
+        assert_eq!(
+            q.find_item(ClipId(first)).unwrap().1.duration.cmp(&old.find_item(ClipId(first)).unwrap().1.duration),
+            if direction < 0.0 { std::cmp::Ordering::Less } else { std::cmp::Ordering::Greater }
+        );
+        assert_eq!(d.undo_steps(), undo + 1);
+        d.exec("edit.undo", json!({}));
+        assert_eq!(*d.app().session.project, *before);
+    }
+}
+
+#[test]
 #[ignore = "headless wgpu visual review"]
 fn ripple_rate_stretch_screenshot() {
     let (mut d, first, _) = ripple_fixture();
@@ -801,4 +826,34 @@ fn ripple_rate_stretch_screenshot() {
     d.harness.input_mut().events.push(egui::Event::PointerMoved(pos2(x1 + (x1 - x0) / 4.0, y)));
     d.frames(3);
     d.screenshot("ripple-rate-stretch-preview");
+}
+
+/// #3300: with Alt held, dragging the edge of one side of a linked clip trims only that side; the
+/// linked audio keeps its range. Without Alt the partner still follows.
+#[test]
+fn alt_dragging_an_edge_trims_only_that_side_of_a_link() {
+    for alt in [true, false] {
+        let mut d = Driver::demo();
+        let seq = d.app().session.active_sequence().expect("sequence");
+        let (video, sound) = seq.video_tracks[0]
+            .items
+            .iter()
+            .find_map(|v| {
+                let a = seq.audio_tracks.iter().flat_map(|t| &t.items).find(|a| v.link.is_some() && a.link == v.link)?;
+                Some((v.id.0, a.id.0))
+            })
+            .expect("a linked clip on V1");
+        let (v0, a0) = (d.span(video), d.span(sound));
+        let (_, x1, y) = d.edges(video);
+        d.ok("ui.drag", json!({"from": {"x": x1 - 3.0, "y": y}, "to": {"x": x1 - 63.0, "y": y}, "steps": 20, "modifiers": {"alt": alt}}));
+        d.frames(2);
+        let v1 = d.span(video);
+        assert_eq!(v1.0, v0.0, "alt={alt}: the In point stays");
+        assert!(v1.1 < v0.1, "alt={alt}: the video's Out edge was trimmed: {v0:?} -> {v1:?}");
+        if alt {
+            assert_eq!(d.span(sound), a0, "Alt-trim leaves the linked audio alone");
+        } else {
+            assert_eq!(d.span(sound).1, a0.1 - (v0.1 - v1.1), "the linked audio follows a plain trim");
+        }
+    }
 }

@@ -1,4 +1,7 @@
-use crate::{Session, commands::rate_stretch_preview};
+use crate::{
+    Session,
+    commands::{rate_stretch_preview, rate_stretch_preview_linked},
+};
 use filmcraft_project::ClipId;
 use filmcraft_time::Tick;
 use serde_json::json;
@@ -137,4 +140,27 @@ fn caption_refusal_matches_preview_and_preserves_history() {
     assert!(s.execute("timeline.rateStretch", json!({"clip":ids[0].0,"edge":"out","delta":delta.0,"ripple":true})).is_err());
     assert_eq!(*s.project, *before);
     assert_eq!(s.history.undo.len(), history);
+}
+
+#[test]
+fn alt_rate_stretch_preview_and_release_leave_the_linked_member_unchanged() {
+    for (ripple, frames) in [(false, -10), (true, 10)] {
+        let (mut s, ids) = fixture();
+        let before = s.project.clone();
+        let history = s.history.undo.len();
+        let delta = s.sequence_rate().tick_of(frames);
+        let preview = rate_stretch_preview_linked(&s, ids[0], filmcraft_edit::Edge::Out, delta, ripple, false).unwrap();
+        assert_eq!(*s.project, *before, "preview is read only");
+        s.execute("timeline.rateStretch", json!({"clip":ids[0].0,"edge":"out","delta":delta.0,"ripple":ripple,"linked":false})).unwrap();
+        let q = s.active_sequence().unwrap();
+        let old = before.sequence(s.state.active_sequence.unwrap()).unwrap();
+        assert_eq!(q, &preview, "Alt preview and release agree");
+        assert_eq!(q.find_item(ids[1]), old.find_item(ids[1]), "the edited clip's linked audio stays unchanged");
+        assert_eq!(q.find_item(ids[0]).unwrap().1.duration, old.find_item(ids[0]).unwrap().1.duration + delta);
+        assert_eq!(s.history.undo.len(), history + 1);
+        s.execute("edit.undo", json!({})).unwrap();
+        assert_eq!(*s.project, *before);
+        s.execute("edit.redo", json!({})).unwrap();
+        assert_eq!(s.active_sequence().unwrap(), &preview);
+    }
 }
