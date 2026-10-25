@@ -158,7 +158,7 @@ fn transitions_follow_changed_cut_and_fades_fit_new_duration() {
     let tr = fx.seq.track(v1).unwrap();
     let cut = tr.transitions.iter().find(|t| t.id == TransitionId(1)).unwrap();
     let fade = tr.transitions.iter().find(|t| t.id == TransitionId(2)).unwrap();
-    assert_eq!((cut.start, cut.duration), (-f(1), f(6)), "cut offset and handles retained");
+    assert_eq!((cut.start, cut.duration), (f(0), f(6)), "transition stays within its clips when the head gets shorter");
     assert_eq!((fade.start, fade.duration), (f(0), f(2)), "fade capped to new clip");
 }
 
