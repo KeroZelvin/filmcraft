@@ -6,6 +6,7 @@ use filmcraft_project::ClipId;
 use filmcraft_time::Tick;
 use serde_json::json;
 
+/// Build three aligned linked pairs and a locked synthetic music bed.
 fn fixture() -> (Session, Vec<ClipId>) {
     let mut s = Session::default();
     s.execute("file.newProject", json!({"name":"Ripple stretch"})).unwrap();
@@ -23,6 +24,7 @@ fn fixture() -> (Session, Vec<ClipId>) {
     (s, ids)
 }
 
+/// Preview, command, persistence and undo agree for either drag direction and trailing selection.
 #[test]
 fn ripple_rate_stretch_keeps_linked_media_locked_music_and_one_undo_step() {
     for delta in [-20, 20] {
@@ -68,6 +70,7 @@ fn ripple_rate_stretch_keeps_linked_media_locked_music_and_one_undo_step() {
     }
 }
 
+/// The Speed/Duration ripple option does not persist into a later ordinary stretch.
 #[test]
 fn ordinary_stretch_and_dialog_ripple_do_not_enable_later_visual_ripple() {
     let (mut s, ids) = fixture();
@@ -80,6 +83,7 @@ fn ordinary_stretch_and_dialog_ripple_do_not_enable_later_visual_ripple() {
     }
 }
 
+/// Unsupported edges, hostile deltas and locked edits leave project and history unchanged.
 #[test]
 fn unsupported_in_edge_and_hostile_commands_are_atomic() {
     let (mut s, ids) = fixture();
@@ -129,6 +133,7 @@ fn synthetic_speed_duration_ripple_still_renders_after_undo_redo() {
     }
 }
 
+/// The preview and command both refuse affected sync-locked captions without adding history.
 #[test]
 fn caption_refusal_matches_preview_and_preserves_history() {
     let (mut s, ids) = fixture();
@@ -142,6 +147,7 @@ fn caption_refusal_matches_preview_and_preserves_history() {
     assert_eq!(s.history.undo.len(), history);
 }
 
+/// Alt’s captured link-following choice agrees between preview, commit and undo.
 #[test]
 fn alt_rate_stretch_preview_and_release_leave_the_linked_member_unchanged() {
     for (ripple, frames) in [(false, -10), (true, 10)] {

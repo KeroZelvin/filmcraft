@@ -11,6 +11,11 @@ captured at the press, so releasing Shift before the mouse does not change the e
 preview uses the same edit algebra as release; a blocked edit reports its reason and stays put.
 One drag is one undo step.
 
+Pointer updates and drawing share a bounded cache of successful or blocked edit previews. The
+key includes project identity/revision, active sequence, link-selection state and stretch inputs;
+clamped requests share their accepted-delta preview. Ending or cancelling the drag releases the
+snapshots. `stretch_preview::tests` covers reuse and invalidation without mutating the project.
+
 Plain Rate Stretch, including Shift on an In edge, retains its usual neighbour-limited behavior.
 The **Ripple Edit, Shifting Trailing Clips** checkbox applies only to the Speed/Duration dialog;
 it does not enable a persistent mode for later drags. There is no new global preference.
@@ -114,15 +119,33 @@ keeps Source navigation, markers and marked-range playback separate from Program
 
 ## Pane layout controls
 
-Dock transactions and pointer targets use `craft-ui::docking`; bounded split geometry and
-keyboard-accessible resize handles use `craft-ui::layout`. FilmCraft adapts its existing saved
-dock tree and panel identities to the shared model. Panel tabs or their header grip can move
-between tab groups, split at an edge, reorder, or float when released with Cmd/Ctrl. Floating
-panels move by their empty header and resize from the bottom-right corner. Timeline sequence
-tabs retain their sequence-opening, closing and horizontal reorder behavior; the header grip
-moves the Timeline panel. Workspace saves retain floating groups alongside the legacy layout
-JSON, and workspaces without floating data still load. Automation IDs and workspace commands
-remain the integration boundary.
+The panels use `craft-ui::docking` with its split-tree settings: craft-ui draws the frames, tab
+strips, floating windows and drag previews and owns the gestures; `dock_ui.rs` draws the panel
+bodies, the ≡ panel menu and the Timeline's sequence tabs. Bounded split geometry and
+keyboard-accessible resize handles use `craft-ui::layout`. Panel tabs or their group's drag bar
+move between tab groups, split at a group's or the window's edge, reorder, or float when released
+with Cmd/Ctrl; a release over no target cancels. Tools and the Audio Meters keep their widths
+as the window resizes (fixed split sizes, which a divider drag keeps fixed); the other groups
+resize with the window. Every group resizes down to the same minimum and has no maximum.
+Timeline sequence tabs retain their sequence-opening, closing and horizontal reorder behavior.
+
+On desktop each floating panel opens in its own OS window. Tool panels are palettes: they stay
+above other windows and hide while another application is active. The video viewers (Program,
+Source, Reference Monitor, Lumetri Scopes) are normal windows, say on a second display: they
+stack with the main window and stay shown in the background. A floating window moves by its
+title bar, resizes from every edge and splits like the main window. While a modal dialog is open
+(Settings, Recovery, Revert, a file dialog), the native windows are dimmed and take no input.
+The main window's input rewrite (macOS Control+Click as a secondary click,
+`--control-input-only`) also runs in each native window, and files dropped on one are imported
+like files dropped on the main window; on the Timeline they land at the drop point. A drag from
+a panel (a clip from the Source Monitor or the Project panel, an effect, a template) drops on a
+panel in any of the app's windows. On Wayland
+floating windows stay inside the main window. Where egui embeds viewports (tests), floating
+windows stay inside the main window too.
+
+Named workspaces save the layout, floating windows included; workspaces saved in the earlier
+layout format still load. While every floating window is one tab group, a save also writes the
+earlier format, so earlier versions still open the workspace. Automation IDs and workspace commands remain the integration boundary.
 
 Tools and dock tabs expose their actual egui widget IDs, paint keyboard focus, and support
 Tab/Shift-Tab traversal and Space/Enter activation. Control-injected keys can reach focused

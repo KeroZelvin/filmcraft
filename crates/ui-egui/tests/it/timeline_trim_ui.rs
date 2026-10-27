@@ -33,6 +33,7 @@ impl Driver {
         Self::with_session(session)
     }
 
+    /// Create the offscreen timeline driver around a supplied disposable session.
     fn with_session(session: Session) -> Self {
         let (tx, rx) = channel();
         let app = FilmcraftApp::new(session).with_control(rx);
@@ -85,6 +86,7 @@ impl Driver {
         self.drag_with_mods(from, to, steps, egui::Modifiers::NONE, false);
     }
 
+    /// Drag with press-time modifiers, optionally releasing them before crossing the drag threshold.
     fn drag_with_mods(&mut self, from: Pos2, to: Pos2, steps: usize, mods: egui::Modifiers, release_shift_early: bool) {
         self.harness.input_mut().events.push(egui::Event::ModifiersChanged(mods));
         let push = |d: &mut Self, e: egui::Event| d.harness.input_mut().events.push(e);
@@ -722,6 +724,7 @@ fn linked_audio_drag_adds_audio_and_video_tracks() {
     move_existing_clip_to_a_new_track(true, true);
 }
 
+/// Build an offscreen Rate Stretch timeline with linked clips and locked music.
 fn ripple_fixture() -> (Driver, u64, u64) {
     let mut s = Session::default();
     s.execute("file.newProject", json!({"name":"Visual ripple"})).unwrap();
@@ -742,6 +745,7 @@ fn ripple_fixture() -> (Driver, u64, u64) {
     (d, clips[0], clips[1])
 }
 
+/// Shift captured on press ripples either direction, even when released during the drag.
 #[test]
 fn shift_out_drag_ripples_both_directions_and_captures_shift_at_press() {
     for direction in [-1.0, 1.0] {
@@ -766,6 +770,7 @@ fn shift_out_drag_ripples_both_directions_and_captures_shift_at_press() {
     }
 }
 
+/// Plain Out-edge and Shift In-edge drags keep their ordinary non-ripple behavior.
 #[test]
 fn plain_rate_stretch_leaves_a_gap_and_shift_in_is_ordinary() {
     let (mut d, first, next) = ripple_fixture();
@@ -783,6 +788,7 @@ fn plain_rate_stretch_leaves_a_gap_and_shift_in_is_ordinary() {
     assert_eq!(d.span(next).0, next_start);
 }
 
+/// Alt and Shift+Alt captured on press preserve the edited clip’s linked audio.
 #[test]
 fn alt_rate_stretch_and_shift_alt_ripple_leave_the_edited_linked_audio_fixed() {
     for (mods, direction) in [(egui::Modifiers::ALT, -1.0), (egui::Modifiers { alt: true, shift: true, ..Default::default() }, 1.0)] {
@@ -808,6 +814,7 @@ fn alt_rate_stretch_and_shift_alt_ripple_leave_the_edited_linked_audio_fixed() {
     }
 }
 
+/// Render the Shift Out-edge hover and live ripple preview without opening a window.
 #[test]
 #[ignore = "headless wgpu visual review"]
 fn ripple_rate_stretch_screenshot() {

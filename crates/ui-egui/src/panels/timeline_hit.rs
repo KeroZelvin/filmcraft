@@ -587,6 +587,7 @@ mod tests {
         }
     }
 
+    /// Shift exposes ripple stretching only for the Rate Stretch tool’s Out edge.
     #[test]
     fn shift_rate_stretch_is_explicit_and_out_only() {
         let (seq, l, tr) = fixture(clips());

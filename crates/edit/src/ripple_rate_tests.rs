@@ -1,10 +1,12 @@
 use super::*;
 
+/// Apply an Out-edge ripple stretch with the fixture’s edit context.
 fn stretch(fx: &mut Fx, clips: &[ClipId], delta: Tick) -> Result<f64> {
     let mut next = fx.next;
     ripple_rate_stretch_items(&mut fx.seq, clips, delta, &mut Fx::ctx(&mut next))
 }
 
+/// Opening and closing the cut preserve source frames, existing gaps and excluded tracks.
 #[test]
 fn both_directions_keep_adjacency_gaps_source_and_locked_music() {
     for delta in [-17, 23] {
@@ -41,6 +43,7 @@ fn both_directions_keep_adjacency_gaps_source_and_locked_music() {
     }
 }
 
+/// A linked split-edit follower moves once, or a collision rejects the whole edit.
 #[test]
 fn split_edit_follower_moves_once_or_refuses_atomically() {
     for blocked in [false, true] {
@@ -68,6 +71,7 @@ fn split_edit_follower_moves_once_or_refuses_atomically() {
     }
 }
 
+/// Closing across an independent sync-locked clip refuses without changing the sequence.
 #[test]
 fn sync_locked_material_across_closing_region_blocks_without_mutation() {
     let mut fx = Fx::new();
@@ -80,6 +84,7 @@ fn sync_locked_material_across_closing_region_blocks_without_mutation() {
     assert_eq!(fx.seq, before);
 }
 
+/// Locked members stay fixed; a selection containing only locked members cannot stretch.
 #[test]
 fn locked_partners_stay_fixed_and_all_locked_refuses() {
     let mut fx = Fx::new();
@@ -96,6 +101,7 @@ fn locked_partners_stay_fixed_and_all_locked_refuses() {
     assert_eq!(fx.seq, before);
 }
 
+/// Differently edited linked members cannot be retimed as one aligned group.
 #[test]
 fn unequal_or_offset_linked_members_are_refused() {
     for change in [0, 1, 2, 3] {
@@ -116,6 +122,7 @@ fn unequal_or_offset_linked_members_are_refused() {
     }
 }
 
+/// Invalid ids and overflow refuse, while repeated bounded edits retain precise source ranges.
 #[test]
 fn bounds_and_missing_ids_are_safe_and_rate_keeps_precision() {
     let mut fx = Fx::new();
@@ -137,6 +144,7 @@ fn bounds_and_missing_ids_are_safe_and_rate_keeps_precision() {
     assert_eq!((i.source_in, i.source_out(), i.duration), (f(10), f(70), f(1)));
 }
 
+/// Transitions follow the moved cut and fades fit within a shortened clip.
 #[test]
 fn transitions_follow_changed_cut_and_fades_fit_new_duration() {
     let mut fx = Fx::new();
@@ -162,6 +170,7 @@ fn transitions_follow_changed_cut_and_fades_fit_new_duration() {
     assert_eq!((fade.start, fade.duration), (f(0), f(2)), "fade capped to new clip");
 }
 
+/// Affected caption tracks block the edit unless locked or excluded from sync lock.
 #[test]
 fn affected_sync_locked_captions_block_until_explicitly_excluded() {
     for delta in [-10, 10] {
