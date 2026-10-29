@@ -1,7 +1,7 @@
 //! Bounded Rate Stretch previews shared by pointer updates and the next draw.
 //! Keep failures as well as successful edits: a blocked pointer request can alternate with the
-//! unchanged geometry drawn at delta zero. Project edits, sequence changes and link selection
-//! invalidate the inputs; ending a stretch or resetting media caches releases the snapshots.
+//! unchanged geometry drawn at delta zero. Project edits, sequence changes, marker ripple and link
+//! selection invalidate the inputs; ending a stretch or resetting media caches releases the snapshots.
 
 use std::collections::VecDeque;
 use std::sync::{Arc, Weak};
@@ -19,6 +19,7 @@ struct Key {
     revision: u64,
     sequence: Option<ItemId>,
     linked_selection: bool,
+    ripple_sequence_markers: bool,
     clip: ClipId,
     edge: Edge,
     delta: Tick,
@@ -56,6 +57,7 @@ pub(super) fn cached(app: &FilmcraftApp, clip: ClipId, edge: Edge, delta: Tick, 
         revision: app.session.revision,
         sequence: app.session.state.active_sequence,
         linked_selection: app.session.state.linked_selection,
+        ripple_sequence_markers: app.session.state.ripple_sequence_markers,
         clip,
         edge,
         delta,

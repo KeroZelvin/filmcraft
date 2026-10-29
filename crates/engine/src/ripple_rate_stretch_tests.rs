@@ -170,3 +170,60 @@ fn alt_rate_stretch_preview_and_release_leave_the_linked_member_unchanged() {
         assert_eq!(s.active_sequence().unwrap(), &preview);
     }
 }
+
+/// Sequence markers follow the accepted ripple delta, including a one-frame clamp, as in ripple trim.
+#[test]
+fn ripple_rate_stretch_markers_respect_preference_clamps_and_history() {
+    for enabled in [false, true] {
+        for requested in [-120, -20, 20] {
+            let (mut s, ids) = fixture();
+            let rate = s.sequence_rate();
+            for (name, frame, duration) in [("before", 0, 0), ("inside removed tail", 50, 0), ("cut", 60, 0), ("range", 90, 20), ("later", 120, 0)] {
+                s.execute("markers.add", json!({"target":"program", "time":rate.tick_of(frame).0, "name":name, "durationFrames":duration})).unwrap();
+            }
+            s.execute("markers.rippleSequenceMarkers", json!({"on":enabled})).unwrap();
+            let before = s.project.clone();
+            let history = s.history.undo.len();
+            let preview = rate_stretch_preview(&s, ids[0], filmcraft_edit::Edge::Out, rate.tick_of(requested), true).unwrap();
+            assert_eq!(*s.project, *before, "preview does not change the project");
+            assert_eq!(s.history.undo.len(), history);
+            let accepted = if requested == -120 { -59 } else { requested };
+            assert_eq!(preview.find_item(ids[0]).unwrap().1.duration, rate.tick_of(60 + accepted));
+            for (name, frame, duration) in [("before", 0, 0), ("cut", 60, 0), ("range", 90, 20), ("later", 120, 0)] {
+                let marker = preview.markers.iter().find(|m| m.name == name).unwrap();
+                let expected = if enabled && frame >= 60 { frame + accepted } else { frame };
+                assert_eq!(marker.start, rate.tick_of(expected), "{name}, enabled={enabled}, requested={requested}");
+                assert_eq!(marker.duration, rate.tick_of(duration));
+            }
+            let inside = preview.markers.iter().find(|m| m.name == "inside removed tail");
+            if enabled && accepted < 0 {
+                assert!(inside.is_none(), "the existing ripple preference removes markers in the removed span");
+            } else {
+                assert_eq!(inside.unwrap().start, rate.tick_of(50));
+            }
+            s.execute("timeline.rateStretch", json!({"clip":ids[0].0,"edge":"out","deltaFrames":requested,"ripple":true})).unwrap();
+            assert_eq!(s.active_sequence().unwrap(), &preview, "preview and release include the same markers");
+            assert_eq!(s.history.undo.len(), history + 1);
+            let after = s.project.clone();
+            s.execute("edit.undo", json!({})).unwrap();
+            assert_eq!(*s.project, *before);
+            s.execute("edit.redo", json!({})).unwrap();
+            assert_eq!(*s.project, *after);
+        }
+    }
+}
+
+/// Enabling sequence-marker ripple does not turn an ordinary Rate Stretch into a ripple edit.
+#[test]
+fn ordinary_rate_stretch_keeps_markers_fixed_with_ripple_preference_enabled() {
+    let (mut s, ids) = fixture();
+    let rate = s.sequence_rate();
+    s.execute("markers.add", json!({"target":"program","time":rate.tick_of(120).0,"name":"later"})).unwrap();
+    s.execute("markers.rippleSequenceMarkers", json!({"on":true})).unwrap();
+    let before = s.active_sequence().unwrap().clone();
+    let preview = rate_stretch_preview(&s, ids[0], filmcraft_edit::Edge::Out, rate.tick_of(-20), false).unwrap();
+    s.execute("timeline.rateStretch", json!({"clip":ids[0].0,"edge":"out","deltaFrames":-20})).unwrap();
+    assert_eq!(s.active_sequence().unwrap(), &preview);
+    assert_eq!(preview.markers, before.markers);
+    assert_eq!(preview.find_item(ids[2]).unwrap().1.start, before.find_item(ids[2]).unwrap().1.start);
+}

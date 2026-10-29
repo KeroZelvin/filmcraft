@@ -707,11 +707,28 @@ pub fn rate_stretch_preview_linked(s: &Session, clip: ClipId, edge: Edge, delta:
         if edge != Edge::Out {
             return Err(bad("timeline.rateStretch", "ripple rate stretch supports the Out edge only"));
         }
-        edit::ripple_rate_stretch_items(&mut work, &clips, delta, &mut ctx)?;
+        ripple_rate_stretch(&mut work, &clips, delta, s.state.ripple_sequence_markers, &mut ctx)?;
     } else {
         edit::rate_stretch_items(&mut work, &clips, edge, delta, &mut ctx)?;
     }
     Ok(work)
+}
+
+/// Apply the marker preference to the accepted cut movement, shared by preview and release.
+/// Sequence duration is not a suitable delta: locked material can extend beyond the moved cut.
+fn ripple_rate_stretch(q: &mut filmcraft_project::Sequence, clips: &[ClipId], delta: Tick, markers: bool, ctx: &mut edit::EditCtx<'_>) -> Result<f64> {
+    let before = if markers {
+        let clip = *clips.first().ok_or(edit::EditError::Nothing)?;
+        Some((clip, q.find_item(clip).ok_or(edit::EditError::NoItem(clip))?.1.end()))
+    } else {
+        None
+    };
+    let speed = edit::ripple_rate_stretch_items(q, clips, delta, ctx)?;
+    if let Some((clip, from)) = before {
+        let shift = q.find_item(clip).ok_or(edit::EditError::NoItem(clip))?.1.end() - from;
+        crate::sequence_tools::ripple_markers(&mut q.markers, from, shift);
+    }
+    Ok(speed)
 }
 
 /// Sequence settings matching a media clip (New Sequence From Clip, New Sequence from an item):
@@ -3052,8 +3069,12 @@ fn build() -> Vec<CommandSpec> {
                 if ripple && edge != Edge::Out {
                     return Err(bad("timeline.rateStretch", "ripple rate stretch supports the Out edge only"));
                 }
-                let sp = s.edit_sequence("Rate Stretch", |q, ctx, _| {
-                    Ok(if ripple { edit::ripple_rate_stretch_items(q, &clips, d, ctx)? } else { edit::rate_stretch_items(q, &clips, edge, d, ctx)? })
+                let sp = s.edit_sequence("Rate Stretch", |q, ctx, st| {
+                    if ripple {
+                        ripple_rate_stretch(q, &clips, d, st.ripple_sequence_markers, ctx)
+                    } else {
+                        Ok(edit::rate_stretch_items(q, &clips, edge, d, ctx)?)
+                    }
                 })?;
                 Ok(json!({"speed": sp}))
             }

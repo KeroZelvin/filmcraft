@@ -122,3 +122,22 @@ fn project_replacement_with_repeated_ids_and_revision_is_not_a_cache_hit() {
     assert!(!Arc::ptr_eq(&before, &after));
     assert_eq!(after.find_item(clips[0]).unwrap().1.duration, app.session.sequence_rate().tick_of(50));
 }
+
+/// Marker-ripple state changes independently of the project revision and belongs in the preview key.
+#[test]
+fn ripple_rate_stretch_marker_preference_invalidates_cached_geometry() {
+    let (mut app, clips) = fixture(60);
+    let rate = app.session.sequence_rate();
+    app.session.execute("markers.add", json!({"target":"program","time":rate.tick_of(60).0,"name":"cut"})).unwrap();
+    app.session.state.ripple_sequence_markers = false;
+    let revision = app.session.revision;
+    let before = cached(&app, clips[0], Edge::Out, rate.tick_of(10), true, true).unwrap();
+    assert_eq!(before.markers[0].start, rate.tick_of(60));
+    app.session.state.ripple_sequence_markers = true;
+    let after = cached(&app, clips[0], Edge::Out, rate.tick_of(10), true, true).unwrap();
+    assert_eq!(app.session.revision, revision);
+    assert!(!Arc::ptr_eq(&before, &after), "the preference changes the requested preview");
+    assert_eq!(after.markers[0].start, rate.tick_of(70));
+    app.session.state.ripple_sequence_markers = false;
+    assert_eq!(cached(&app, clips[0], Edge::Out, rate.tick_of(10), true, true).unwrap().markers[0].start, rate.tick_of(60));
+}

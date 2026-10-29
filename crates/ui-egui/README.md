@@ -11,6 +11,10 @@ captured at the press, so releasing Shift before the mouse does not change the e
 preview uses the same edit algebra as release; a blocked edit reports its reason and stays put.
 One drag is one undo step.
 
+The existing **Ripple Sequence Markers** setting also applies to the drag and its live ruler
+preview. Markers follow the accepted duration change, including a clamped drag; shortening
+removes markers in the removed span, as for ripple trim. With the setting off, markers stay fixed.
+
 Pointer updates and drawing share a bounded cache of successful or blocked edit previews. The
 key includes project identity/revision, active sequence, link-selection state and stretch inputs;
 clamped requests share their accepted-delta preview. Ending or cancelling the drag releases the

@@ -864,3 +864,52 @@ fn alt_dragging_an_edge_trims_only_that_side_of_a_link() {
         }
     }
 }
+
+/// The sequence-marker preference moves the live ruler marker with its adjacent follower clip.
+#[test]
+fn ripple_rate_stretch_marker_preview_follows_the_cut_before_release() {
+    let (mut d, first, next) = ripple_fixture();
+    let frame = d.app().session.sequence_rate().frame_duration().0;
+    let marker = d.exec("markers.add", json!({"target":"program","time":60*frame,"name":"Cut marker"}))["marker"].as_u64().unwrap();
+    d.exec("markers.rippleSequenceMarkers", json!({"on":true}));
+    let before = d.app().session.project.clone();
+    let (x0, x1, y) = d.edges(first);
+    let from = pos2(x1 - 3.0, y);
+    let to = pos2(x1 + (x1 - x0) / 4.0, y);
+    d.harness.input_mut().events.push(egui::Event::ModifiersChanged(egui::Modifiers::SHIFT));
+    d.hover(from);
+    d.harness.input_mut().events.push(egui::Event::PointerButton {
+        pos: from,
+        button: egui::PointerButton::Primary,
+        pressed: true,
+        modifiers: egui::Modifiers::SHIFT,
+    });
+    d.frames(1);
+    d.harness.input_mut().events.push(egui::Event::PointerMoved(to));
+    d.frames(3);
+    let elements = d.ok("ui.elements", json!({"prefix":"timeline."}));
+    let rect = |id: &str| {
+        let element = elements.as_array().unwrap().iter().find(|e| e["id"] == id).unwrap_or_else(|| panic!("missing {id}"));
+        let r = element["rect"].as_array().unwrap();
+        (r[0].as_f64().unwrap(), r[2].as_f64().unwrap())
+    };
+    let (marker_left, marker_width) = rect(&format!("timeline.marker.{marker}"));
+    let marker_x = marker_left + marker_width / 2.0;
+    let follower_x = rect(&format!("timeline.clip.{next}")).0;
+    assert!((marker_x - follower_x).abs() < 1.5, "live marker {marker_x} should follow the cut {follower_x}");
+    assert_eq!(*d.app().session.project, *before, "the live preview leaves the project untouched");
+    d.harness.input_mut().events.push(egui::Event::PointerButton {
+        pos: to,
+        button: egui::PointerButton::Primary,
+        pressed: false,
+        modifiers: egui::Modifiers::NONE,
+    });
+    d.frames(3);
+    let q = d.app().session.active_sequence().unwrap();
+    assert_eq!(q.markers.iter().find(|m| m.id.0 == marker).unwrap().start, q.find_item(ClipId(next)).unwrap().1.start);
+    let after = d.app().session.project.clone();
+    d.exec("edit.undo", json!({}));
+    assert_eq!(*d.app().session.project, *before);
+    d.exec("edit.redo", json!({}));
+    assert_eq!(*d.app().session.project, *after);
+}
