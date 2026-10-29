@@ -286,10 +286,28 @@ fn mjpeg_ac3() {
     assert!(f.tags.iter().flat_map(|t| &t.simple).any(|s| s.name == "ENCODER"));
 }
 
+/// Compare AV1 packets and track metadata with ffprobe, including the av1C configuration record.
 #[test]
 fn av1() {
     let Some((_, f, _)) = run("av1.mkv") else { return };
     assert!(matches!(&f.tracks[0].codec, Codec::Av1 { av1c } if av1c.first() == Some(&0x81)));
+}
+
+/// Read the owning Block's lacing bits, not the sample's index within its lace (RFC 9559 §10.3).
+fn block_lacing_flags(bytes: &[u8], sample: &Sample) -> u8 {
+    use element_ids::{BLOCK, BLOCK_GROUP, SIMPLE_BLOCK};
+
+    let offset = usize::try_from(sample.block_offset).unwrap();
+    let element = ebml::Children::new(&bytes[offset..]).next().expect("sample's block element");
+    assert!(!element.truncated);
+    let data = match element.id {
+        SIMPLE_BLOCK => element.data,
+        BLOCK_GROUP => ebml::Children::new(element.data).find(|e| e.id == BLOCK).expect("Block in BlockGroup").data,
+        id => panic!("unexpected sample element {id:#x}"),
+    };
+    let (_, track_number_len, _) = ebml::read_vint(data).expect("block's track number");
+    // Track-number VINT, signed 16-bit relative timestamp, then the flags byte.
+    data[track_number_len + 2] & 0x06
 }
 
 /// Remux without changing packet timestamps or payloads, then check the output independently
@@ -322,6 +340,20 @@ fn remux_and_compare(ffprobe: &Path, file: &MkvFile, packets: &[Packet], mode: L
     let out = w.finish().unwrap().into_inner();
     let laced = {
         let f = open(&out[..]).unwrap();
+        // The first sample visits each block once, including blocks that did not lace.
+        for sample in f.tracks.iter().flat_map(|t| &t.samples).filter(|s| s.lace == 0) {
+            let flags = block_lacing_flags(&out, sample);
+            if flags != 0 {
+                assert!(expect_laced, "{label} {mode:?}: unexpected laced block at {}", sample.block_offset);
+                let matches_mode = match mode {
+                    LacingMode::None => false,
+                    LacingMode::Xiph => flags == 0x02,
+                    LacingMode::Ebml => flags == 0x06,
+                    LacingMode::FixedOrEbml => matches!(flags, 0x04 | 0x06),
+                };
+                assert!(matches_mode, "{label} {mode:?}: wrong block lacing flags {flags:#04x} at {}", sample.block_offset);
+            }
+        }
         f.tracks.iter().any(|t| t.samples.iter().any(|s| s.lace > 0))
     };
     assert_eq!(laced, expect_laced, "{label} {mode:?}: unexpected lacing");

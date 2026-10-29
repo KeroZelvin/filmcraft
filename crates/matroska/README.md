@@ -11,6 +11,8 @@ original timestamp, payload, keyframe flag and codec headers without lacing.
 This avoids assuming that every encoder's `DefaultDuration` permits lacing.
 All remux cases are checked independently with ffprobe; assertions are not skipped
 when requested lacing cannot preserve timestamps.
+The encoded Block flags must match the requested mode: Xiph, EBML, or either
+fixed-size or EBML for FixedOrEbml; unlaced fallback blocks remain valid.
 
 Laced frames share a block timestamp and must be contiguous; see
 [RFC 9559 section 10.3.5](https://www.rfc-editor.org/rfc/rfc9559.html#section-10.3.5).
